@@ -13,8 +13,7 @@
 #define S_DATA  2
 
 static volatile bool   txready;     // Aligned with clock?
-static volatile int    rxstate;     // Current encoder state
-
+static volatile int    rxstate;     // Current decoder state
 static volatile byte   rxbuf[128];  // Data buffer for decoder
 static volatile byte * rxhead;      // Write position for decoder
 static volatile byte * rxtail;      // End of decoder buffer
