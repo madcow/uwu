@@ -14,21 +14,22 @@
 
 static volatile bool   txready;     // Aligned with clock?
 static volatile int    rxstate;     // Current decoder state
-static volatile byte   rxbuf[128];  // Data buffer for decoder
-static volatile byte * rxhead;      // Write position for decoder
-static volatile byte * rxtail;      // End of decoder buffer
 static volatile word   edgecap;     // Current edge capture time
 static volatile word   edgedir;     // Current edge direction
 static volatile int    lastbit;     // Previously read logic value
 static volatile word   numsync;     // Number of preamble bits read
 static volatile word   numdata;     // Number of data bits read
 static volatile bool   needmid;     // Expect short interval next
+static volatile byte   rxbuf[128];  // Data buffer for decoder
+static volatile byte * rxhead;      // Write position for decoder
+static volatile byte * rxtail;      // End of decoder buffer
+static volatile bool   rxdone;      // Finished receiving data
 
 static void SendByte(byte data);
 static void WaitPulse(void);
 static void HandleEdge(void);
 static void Synchronize(void);
-static void ReadPayload(void);
+static void ReadDataBit(void);
 static void ReadShortPeriod(void);
 static void ReadLongPeriod(void);
 static void WriteBit(int val);
@@ -92,20 +93,25 @@ void RF_Transmit(const byte *data, int size)
 	while (head < tail) {
 		SendByte(*head++);
 	}
+
+	// EOT sentinel
+	SendByte(0x04);
 }
 
 int RF_Receive(byte *data, int size)
 {
 	int n = 0;
 
-	while (1) {
-		if (n == size || n == (int) numdata) {
-			break; // Finished copying
+	cli();
+	if (rxdone) {
+		rxdone = false;
+		while (n < size && n < (int) numdata) {
+			data[n] = rxbuf[n];
+			n++;
 		}
-		data[n] = rxbuf[n];
-		n++;
 	}
 
+	sei();
 	return n;
 }
 
@@ -146,8 +152,8 @@ static void WaitPulse(void)
 
 static void HandleEdge(void)
 {
-	if (edgedir != E_RISING) {
-		return; // Wrong edge
+	if (rxdone || edgedir != E_RISING) {
+		return; // Ignore this edge
 	}
 
 	rxstate = S_SYNC;
@@ -164,15 +170,15 @@ static void Synchronize(void)
 
 	numsync++;
 	if (numsync == 8) {
-		rxstate = S_DATA;
-		rxhead  = rxbuf;
-		needmid = false;
 		numdata = 0;
 		lastbit = 0;
+		needmid = false;
+		rxhead  = rxbuf;
+		rxstate = S_DATA;
 	}
 }
 
-static void ReadPayload(void)
+static void ReadDataBit(void)
 {
 	if (edgecap >= 75 && edgecap <= 175) {
 		ReadShortPeriod();
@@ -222,7 +228,8 @@ static void WriteBit(int val)
 	int bit;
 
 	if (rxhead == rxtail) {
-		return; // Discard
+		rxstate = S_IDLE;
+		return;
 	}
 
 	bit = numdata % 8;
@@ -232,6 +239,12 @@ static void WriteBit(int val)
 	*rxhead |= (val << (7 - bit));
 
 	if (bit == 7) {
+		// Check for EOT sentinel
+		if (*rxhead == 0x04) {
+			numdata -= 8;
+			rxdone   = true;
+			rxstate  = S_IDLE;
+		}
 		rxhead++;
 	}
 }
@@ -261,7 +274,7 @@ ISR(TIMER3_CAPT_vect)
 	} else if (rxstate == S_SYNC) {
 		Synchronize();
 	} else if (rxstate == S_DATA) {
-		ReadPayload();
+		ReadDataBit();
 	}
 }
 
@@ -273,7 +286,7 @@ ISR(TIMER3_OVF_vect)
 	if (rxstate == S_SYNC) {
 		Synchronize();
 	} else if (rxstate == S_DATA) {
-		ReadPayload();
+		ReadDataBit();
 	}
 }
 
