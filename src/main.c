@@ -94,8 +94,8 @@ void RF_Transmit(const byte *data, int size)
 		SendByte(*head++);
 	}
 
-	// EOT sentinel
-	SendByte(0x04);
+	// EOT sentinel marking the end
+	SendByte(0xFF); // FF = 1111 1111
 }
 
 int RF_Receive(byte *data, int size)
@@ -240,7 +240,7 @@ static void WriteBit(int val)
 
 	if (bit == 7) {
 		// Check for EOT sentinel
-		if (*rxhead == 0x04) {
+		if (*rxhead == 0xFF) {
 			numdata -= 8;
 			rxdone   = true;
 			rxstate  = S_IDLE;
