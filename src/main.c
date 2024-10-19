@@ -4,8 +4,8 @@
 #include <avr/interrupt.h>
 
 // Edge direction
-#define E_RISING   1
-#define E_FALLING  0
+#define D_RISING   1
+#define D_FALLING  0
 
 // Decoder state
 #define S_IDLE  0
@@ -102,16 +102,23 @@ int RF_Receive(byte *data, int size)
 {
 	int n = 0;
 
-	cli();
-	if (rxdone) {
-		rxdone = false;
-		while (n < size && n < (int) numdata) {
-			data[n] = rxbuf[n];
-			n++;
-		}
+	if (!rxdone) {
+		return 0;
 	}
 
-	sei();
+	// There is no race condition here since the decoder
+	// will pause until all data has been processed and
+	// the rxdone flag is unset.
+
+	while (1) {
+		if (n == size || n == (int) numdata) {
+			break; // Finished copying
+		}
+		data[n] = rxbuf[n];
+		n++;
+	}
+
+	rxdone = false;
 	return n;
 }
 
@@ -152,7 +159,7 @@ static void WaitPulse(void)
 
 static void HandleEdge(void)
 {
-	if (rxdone || edgedir != E_RISING) {
+	if (rxdone || edgedir != D_RISING) {
 		return; // Ignore this edge
 	}
 
@@ -238,6 +245,11 @@ static void WriteBit(int val)
 	*rxhead &= ~(0x80 >> bit);
 	*rxhead |= (val << (7 - bit));
 
+	// XXX: It would be better to separate state logic
+	// from this helper function. Since the EOT sentinel
+	// is 0xFF we can easily check for it by listening
+	// for 16 short intervals in succession.
+
 	if (bit == 7) {
 		// Check for EOT sentinel
 		if (*rxhead == 0xFF) {
@@ -261,13 +273,13 @@ ISR(TIMER3_CAPT_vect)
 {
 	TCNT3 = 0;
 	edgecap = ICR3;
-	edgedir = (PIN(B) & BIT(5)) ? E_RISING : E_FALLING;
+	edgedir = (PIN(B) & BIT(5)) ? D_RISING : D_FALLING;
 
 	// Must not simply toggle the edge direction bit since
 	// we can miss very quick edge changes and run out of
 	// sync with the actual port state.
 
-	TCCR3B = (edgedir == E_RISING) ? 0x02 : 0x42;
+	TCCR3B = (edgedir == D_RISING) ? 0x02 : 0x42;
 
 	if (rxstate == S_IDLE) {
 		HandleEdge();
