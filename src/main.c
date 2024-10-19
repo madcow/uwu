@@ -261,13 +261,13 @@ ISR(TIMER3_CAPT_vect)
 {
 	TCNT3 = 0;
 	edgecap = ICR3;
-	edgedir = (PIN(B) & BIT(5)) ? 1 : 0;
+	edgedir = (PIN(B) & BIT(5)) ? E_RISING : E_FALLING;
 
 	// Must not simply toggle the edge direction bit since
 	// we can miss very quick edge changes and run out of
 	// sync with the actual port state.
 
-	TCCR3B = (edgedir) ? 0x02 : 0x42;
+	TCCR3B = (edgedir == E_RISING) ? 0x02 : 0x42;
 
 	if (rxstate == S_IDLE) {
 		HandleEdge();
