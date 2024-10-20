@@ -30,8 +30,11 @@ static volatile byte   rxbuf[128];  // Data buffer for decoder
 static volatile byte * rxhead;      // Write position for decoder
 static volatile byte * rxtail;      // End of decoder buffer
 static volatile bool   rxdone;      // Finished receiving data
+static volatile int    ntxseq;      // TX end sequence counter
+static volatile int    nrxseq;      // RX end sequence counter
 
 static void SendByte(byte data);
+static void SendTerminator(void);
 static void WaitPulse(void);
 static void HandleEdge(void);
 static void Synchronize(void);
@@ -101,7 +104,7 @@ void RF_Transmit(const byte *data, int size)
 	}
 
 	// EOT sentinel marking the end
-	SendByte(0xFF); // FF = 1111 1111
+	SendTerminator(); // FF = 1111 1111
 }
 
 int RF_Receive(byte *data, int size)
@@ -147,13 +150,41 @@ static void SendByte(byte data)
 			WaitPulse();
 			// Rising edge
 			PORT(D) |= BIT(5);
+
+			// Any time seven consecutive 1s have
+			// been transmitted from the body of
+			// the message, the sender inserts a
+			// 0 before the next bit. This makes
+			// it possible to distinguish the
+			// end of frame sequence from bit
+			// patterns in the data.
+
+			ntxseq++;
+			if (ntxseq == 7) {
+				WaitPulse();
+				WaitPulse();
+				PORT(D) &= ~BIT(5);
+				ntxseq = 0;
+			}
 		} else {
 			WaitPulse();
 			PORT(D) |= BIT(5);
 			WaitPulse();
 			// Falling edge
 			PORT(D) &= ~BIT(5);
+			ntxseq = 0;
 		}
+	}
+}
+
+static void SendTerminator(void)
+{
+	// FF = 1111 1111
+	for (int i = 0; i < 8; i++) {
+		WaitPulse();
+		PORT(D) &= ~BIT(5);
+		WaitPulse();
+		PORT(D) |= BIT(5);
 	}
 }
 
@@ -245,24 +276,31 @@ static void WriteBit(int val)
 		return;
 	}
 
+	if (nrxseq == 7) {
+		nrxseq = 0;
+		if (val == 0) {
+			return;
+		}
+		// End of frame
+		numdata -= 7;
+		rxdone   = true;
+		rxstate  = S_IDLE;
+		nrxseq   = 0;
+	} else {
+		if (val == 1) {
+			nrxseq++;
+		} else {
+			nrxseq = 0;
+		}
+	}
+
 	bit = numdata % 8;
 	numdata++;
 
 	*rxhead &= ~(0x80 >> bit);
 	*rxhead |= (val << (7 - bit));
 
-	// XXX: It would be better to separate state logic
-	// from this helper function. Since the EOT sentinel
-	// is 0xFF we can easily check for it by listening
-	// for 16 short intervals in succession.
-
 	if (bit == 7) {
-		// Check for EOT sentinel
-		if (*rxhead == 0xFF) {
-			numdata -= 8;
-			rxdone   = true;
-			rxstate  = S_IDLE;
-		}
 		rxhead++;
 	}
 }
