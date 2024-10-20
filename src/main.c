@@ -12,6 +12,12 @@
 #define S_SYNC  1
 #define S_DATA  2
 
+// TODO: Framing with either bit or byte based approach:
+// - Bit stuffing approach is completely data agnostic
+// - Sentinel bytes with escape characters are simpler
+// - https://book.systemsapproach.org/direct/framing.html
+// - https://humphryscomputing.com/Notes/Networks/data.framing.html
+
 static volatile bool   txready;     // Aligned with clock?
 static volatile int    rxstate;     // Current decoder state
 static volatile word   edgecap;     // Current edge capture time
